@@ -1,11 +1,44 @@
 {
   "rewrites": [
-    { "source": "/vatsim/data", "destination": "https://data.vatsim.net/v3/vatsim-data.json" },
-    { "source": "/vatsim/events", "destination": "https://my.vatsim.net/api/v2/events/latest" },
-    { "source": "/vatsim/bookings", "destination": "https://atc-bookings.vatsim.net/api/booking" },
-    { "source": "/vatsim/metar/:id", "destination": "https://metar.vatsim.net/:id" }
+    {
+      "source": "/vatsim/data",
+      "destination": "https://data.vatsim.net/v3/vatsim-data.json"
+    },
+    {
+      "source": "/vatsim/events",
+      "destination": "https://my.vatsim.net/api/v2/events/latest"
+    },
+    {
+      "source": "/vatsim/bookings",
+      "destination": "https://atc-bookings.vatsim.net/api/booking"
+    },
+    {
+      "source": "/vatsim/metar/:id",
+      "destination": "https://metar.vatsim.net/:id"
+    },
+    {
+      "source": "/osm/interpreter",
+      "destination": "https://overpass-api.de/api/interpreter"
+    }
   ],
   "headers": [
-    { "source": "/vatsim/(.*)", "headers": [{ "key": "Cache-Control", "value": "no-store" }] }
+    {
+      "source": "/vatsim/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
+    },
+    {
+      "source": "/routes.json",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400"
+        }
+      ]
+    }
   ]
 }

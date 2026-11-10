@@ -88,6 +88,16 @@ h2{font-size:14px;margin:0 0 10px;color:var(--muted);text-transform:uppercase;le
 footer{max-width:1400px;margin:0 auto;padding:0 22px 30px;color:var(--muted);font-size:12px}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--muted);border-top-color:transparent;border-radius:50%;animation:s 0.8s linear infinite;vertical-align:-2px}
 @keyframes s{to{transform:rotate(360deg)}}
+.disp{margin-top:12px;border-top:1px solid var(--line);padding-top:12px}
+.disp h3{margin:0 0 8px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;font-weight:600}
+.dgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px 14px}
+.dgrid div span{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.dgrid div b{font-family:var(--mono);font-size:16px}
+.dgrid div small{display:block;color:var(--muted);font-size:12px}
+.alsel{width:auto;max-width:100%;padding:6px 8px;font-size:14px;margin-bottom:10px}
+.gatebtn{font-size:12px;padding:3px 8px;margin-top:3px}
+.note{font-size:12px;color:var(--muted);margin-top:8px}
+.b-quiet{background:#14373a;color:#9ff0e8}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--accent);padding:8px 16px;border-radius:8px;font-size:14px;display:none;z-index:10}
 </style>
 </head>
@@ -108,6 +118,10 @@ footer{max-width:1400px;margin:0 auto;padding:0 22px 30px;color:var(--muted);fon
     <form class="card" id="form" autocomplete="off">
       <label for="ac">Aircraft</label>
       <select id="ac"></select>
+
+      <label for="airline">Airline</label>
+      <select id="airline"></select>
+      <div class="hint" id="airlinehint">★ = flies this aircraft type in real life</div>
 
       <label>Airports <span style="text-transform:none;letter-spacing:0">(both optional)</span></label>
       <div class="row">
@@ -135,7 +149,18 @@ footer{max-width:1400px;margin:0 auto;padding:0 22px 30px;color:var(--muted);fon
       <input type="datetime-local" id="etd">
       <div class="hint" id="etdz"></div>
 
-      <label class="check"><input type="checkbox" id="needatc" checked> Only show arrivals likely to have ATC when I land</label>
+      <label for="atcmode">ATC</label>
+      <select id="atcmode">
+        <option value="want">I want ATC (staffed now / when I land)</option>
+        <option value="none">No ATC at all (dep and arrival)</option>
+        <option value="any">Don't care</option>
+      </select>
+
+      <label for="routemode">Routes</label>
+      <select id="routemode">
+        <option value="real">Real airline routes only</option>
+        <option value="any">Any route (made-up is fine)</option>
+      </select>
       <label class="check"><input type="checkbox" id="majors" checked> Big airports only</label>
 
       <button class="primary" type="submit" style="width:100%;margin-top:16px;padding:10px">Find flights</button>
@@ -172,7 +197,8 @@ const URLS = {
   data: 'https://data.vatsim.net/v3/vatsim-data.json',
   events: 'https://my.vatsim.net/api/v2/events/latest',
   bookings: 'https://atc-bookings.vatsim.net/api/booking',
-  metar: id => 'https://metar.vatsim.net/' + id
+  metar: id => 'https://metar.vatsim.net/' + id,
+  overpass: q => 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(q)
 };
 
 const AIRCRAFT = {
@@ -181,6 +207,14 @@ const AIRCRAFT = {
   B77W: {name:'Boeing 777-300ER · PMDG',      sb:'B77W', tas:490, range:7300, rwy:9000, burn:7.6, fuelCap:145, heavy:true},
   A388: {name:'Airbus A380-800 · FlyByWire',  sb:'A388', tas:490, range:7900, rwy:9500, burn:11.3,fuelCap:254, heavy:true},
   A20N: {name:'Airbus A320neo · FlyByWire',   sb:'A20N', tas:447, range:3100, rwy:6000, burn:2.4, fuelCap:19,  heavy:false}
+};
+// Real-world operators (IATA) per type, used for ★ and for "any airline" suggestions
+const OPS = {
+  A359: 'SQ QR CX LH DL AF AY IB TK EK ET TG VN CI OZ MH PR CA MU CZ 3U LA AI JL SK LX JX FJ HX AZ BF TX MK'.split(' '),
+  A35K: 'QR CX BA VS EY JL ET TX BF BR JX'.split(' '),
+  B77W: 'AC EK QR CX SQ TK AF KL BA AA UA EY SV ET NH JL KE CA CZ MU BR CI PR TG GA PK AI LX OZ KU MS LA'.split(' '),
+  A388: 'EK QR SQ BA LH QF KE EY NH OZ'.split(' '),
+  A20N: 'U2 6E LH LX OS AF IB VY BA EI TK W6 F9 Y4 VB LA AV JA H2 AK 5J VJ AI XY G9 PC TP A3 SK AZ MU CZ CA 3U EY SV'.split(' ')
 };
 const FAC = {1:'FSS',2:'DEL',3:'GND',4:'TWR',5:'APP',6:'CTR'};
 const FAC_RANK = {DEL:1,GND:2,TWR:3,APP:4,DEP:4,CTR:5,FSS:6};
@@ -241,6 +275,7 @@ function sitePath(u){
   if (u===URLS.events) return '/vatsim/events';
   if (u===URLS.bookings) return '/vatsim/bookings';
   const m = u.match(/^https:\/\/metar\.vatsim\.net\/(.+)$/); if (m) return '/vatsim/metar/'+m[1];
+  if (u.startsWith('https://overpass-api.de/api/interpreter')) return '/osm/interpreter' + u.slice(u.indexOf('?'));
   return u;
 }
 const ROUTES = [
@@ -383,72 +418,245 @@ function perf(dep, arr, ac){
   return {dist, routeNm, air, block, fuel, fl:base*10, east, trk, wind};
 }
 
+/* ===== Real airline routes (routes.json) ===== */
+const RT = { ready:false, airlines:[], byDep:new Map(), byIata:new Map(), count:new Map(), hub:new Map() };
+async function loadRoutes(){
+  try {
+    const r = await fetch('routes.json', {cache:'force-cache'}); if (!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    RT.airlines = j.airlines.map(([iata,icao,name,tel],i)=>({i, iata, icao, name, tel}));
+    for (const al of RT.airlines) if (!RT.byIata.has(al.iata)) RT.byIata.set(al.iata, al);
+    const depCount = new Map();
+    for (const [di,ai,min,cs] of j.r){
+      const dep = NAV.apts[di][0], arr = NAV.apts[ai][0];
+      if (!RT.byDep.has(dep)) RT.byDep.set(dep, []);
+      RT.byDep.get(dep).push({arr, min, cs});
+      for (const c of cs){ RT.count.set(c,(RT.count.get(c)||0)+1);
+        const k=c+'|'+dep; depCount.set(k,(depCount.get(k)||0)+1); }
+    }
+    for (const [k,n] of depCount){ const [c,dep]=k.split('|'); const cur=RT.hub.get(+c); if(!cur||n>cur.n) RT.hub.set(+c,{icao:dep,n}); }
+    RT.ready = true;
+  } catch(e) {
+    RT.ready = false;
+    $('routemode').value = 'any'; $('routemode').disabled = true;
+    $('airlinehint').textContent = "Real route data didn't load, so routes are made up. Airline picks still work.";
+  }
+  fillAirlines();
+}
+const hubOf = al => RT.hub.get(al.i)?.icao;
+const opsFor = acKey => new Set(OPS[acKey]||[]);
+const airlineList = () => RT.ready ? RT.airlines.filter(a=>a.icao) : [];
+function fillAirlines(){
+  const sel = $('airline'), keep = sel.value || load('airline') || '';
+  const ops = opsFor($('ac').value);
+  const list = airlineList();
+  const mine = list.filter(a=>ops.has(a.iata)).sort((a,b)=>a.name.localeCompare(b.name));
+  const rest = list.filter(a=>!ops.has(a.iata)).sort((a,b)=>a.name.localeCompare(b.name));
+  sel.innerHTML = '';
+  sel.add(new Option('Any airline (suggest one for me)', ''));
+  const g1 = document.createElement('optgroup'); g1.label = `★ Fly the ${AIRCRAFT[$('ac').value].sb} in real life`;
+  mine.forEach(a=>g1.appendChild(new Option(`★ ${a.name} (${a.iata} / ${a.icao})`, a.iata+'|'+a.i)));
+  const g2 = document.createElement('optgroup'); g2.label = 'All other airlines';
+  rest.forEach(a=>g2.appendChild(new Option(`${a.name} (${a.iata} / ${a.icao})`, a.iata+'|'+a.i)));
+  if (mine.length) sel.appendChild(g1); if (rest.length) sel.appendChild(g2);
+  sel.value = [...sel.options].some(o=>o.value===keep) ? keep : '';
+  if (!RT.ready && !list.length) { sel.disabled = true; } else sel.disabled = false;
+}
+const selectedAirline = () => { const v=$('airline').value; if(!v) return null; return RT.airlines[+v.split('|')[1]] || null; };
+
+/* ===== Dispatch details ===== */
+function hash(str){ let h=2166136261; for (let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
+function flightNumber(al, dep, arr, longHaul){
+  const pair = [dep,arr].sort().join('-'); const h = hash(al.iata+pair);
+  let n = longHaul ? 3 + (h % 498)*2 : 101 + (h % 1449)*2;       // odd base number
+  const hub = hubOf(al);
+  const outbound = hub ? dep===hub || (arr!==hub && dep<arr) : dep<arr;
+  return outbound ? n : n+1;
+}
+function selcal(seed){
+  const L='ABCDEFGHJKLMPQRS'.split(''); let h=hash(seed); const pick=[];
+  while (pick.length<4){ const c=L[h%16]; h=Math.floor(h/16)||hash(seed+pick.length); if(!pick.includes(c)) pick.push(c); }
+  const a=pick.slice(0,2).sort().join(''), b=pick.slice(2).sort().join(''); return a+'-'+b;
+}
+function alternateFor(arr, ac){
+  let best=null, bd=1e9;
+  for (const x of APT.values()){ if (x.icao===arr.icao || x.rwy<ac.rwy || (ac.heavy && x.size!=='L')) continue;
+    const d=gcd(arr,x); if (d<35 || d>260) continue; const s=d - (x.size==='L'?40:0); if (s<bd){ bd=s; best=x; } }
+  return best;
+}
+function dispatchFor(c, al, q){
+  const num = flightNumber(al, c.d.icao, c.a.icao, c.p.dist>1500);
+  const tel = (al.tel || al.name).toUpperCase();
+  return { al, num, fn: al.iata+num, cs: al.icao+num, tel: `${tel} ${num}`, selcal: selcal(al.icao+num), altn: alternateFor(c.a, q.ac) };
+}
+
+/* ===== Gates from OpenStreetMap ===== */
+const gateCache = new Map();
+function natural(a,b){ return a.localeCompare(b, undefined, {numeric:true, sensitivity:'base'}); }
+function loadGates(apt){
+  if (gateCache.has(apt.icao)) return gateCache.get(apt.icao);
+  const q = `[out:json][timeout:25];(node["aeroway"="gate"](around:6000,${apt.lat},${apt.lon});node["aeroway"="parking_position"](around:6000,${apt.lat},${apt.lon});way["aeroway"="parking_position"](around:6000,${apt.lat},${apt.lon}););out tags center;`;
+  const p = fetchVia(URLS.overpass(q)).then(j=>{
+    const seen=new Set(), gates=[], stands=[];
+    for (const el of (j.elements||[])){ const t=el.tags||{}; const ref=(t.ref||t.name||'').trim(); if(!ref || ref.length>12) continue;
+      const key=t.aeroway+ref; if (seen.has(key)) continue; seen.add(key);
+      (t.aeroway==='gate'?gates:stands).push({ref, term:t.terminal||t['terminal:ref']||''}); }
+    gates.sort((a,b)=>natural(a.ref,b.ref)); stands.sort((a,b)=>natural(a.ref,b.ref));
+    return {gates, stands};
+  }).catch(e=>{ gateCache.delete(apt.icao); throw e; });
+  gateCache.set(apt.icao, p); return p;
+}
+function pickGate(data, seed, heavy){
+  const pool = (data.gates.length>=4 ? data.gates : data.gates.concat(data.stands));
+  if (!pool.length) return null;
+  // widebodies: avoid the very first refs, which are often small regional gates
+  const lo = heavy && pool.length>12 ? Math.floor(pool.length*0.25) : 0;
+  const i = lo + (hash(seed) % (pool.length-lo));
+  const near = [pool[i-1], pool[i+1]].filter(Boolean).map(g=>g.ref);
+  return {main: pool[i], alts: near, kind: data.gates.length>=4 ? 'gate' : 'stand'};
+}
+async function fillGates(cardEl){
+  const box = cardEl.querySelector('.dispbody'); if (!box || box.dataset.loading) return;
+  box.dataset.loading = '1'; cardEl._gatesWanted = true;
+  const c = CANDS[+cardEl.dataset.idx]; const disp = cardEl._disp;
+  const heavy = AIRCRAFT[$('ac').value].heavy;
+  const cell = async (apt, el, tag)=>{
+    el.innerHTML = '<span class="spin"></span>';
+    try { const g = await loadGates(apt); const pk = pickGate(g, disp.cs+tag+apt.icao, heavy);
+      el.innerHTML = pk ? `<b>${esc(pk.main.ref)}</b>${pk.main.term?` <small>Terminal ${esc(pk.main.term)}</small>`:''}<small>or ${esc(pk.alts.join(', ')||'any free ' + pk.kind)}</small>`
+                        : `<b>—</b><small>No gate data for ${apt.icao}. Pick a stand that fits.</small>`;
+      el.dataset.value = pk ? pk.main.ref : '';
+    } catch(e){ el.innerHTML = `<b>—</b><small>Gate lookup failed. <button class="gatebtn">Retry</button></small>`;
+      el.querySelector('button').onclick=()=>{ delete box.dataset.loading; fillGates(cardEl); }; }
+  };
+  await Promise.all([cell(c.d, box.querySelector('.g-out'), 'out'), cell(c.a, box.querySelector('.g-in'), 'in')]);
+  delete box.dataset.loading;
+}
+
+/* ===== ATC "quiet" check for no-ATC mode ===== */
+function quiet(apt, t){
+  const hoursAhead = Math.max(0,(t-Date.now())/3.6e6);
+  if (S.events.some(e=>e.apts.includes(apt.icao) && t>=e.s-90*60e3 && t<=e.e+60*60e3)) return false;
+  for (const b of S.bookings){ if (t>=b.s-60*60e3 && t<=b.e+30*60e3 && coversAirport(b.callsign, apt)) return false; }
+  const now = nowCover(apt);
+  if (now.local.length && hoursAhead<5) return false;
+  if (now.ctr.length && hoursAhead<3) return false;
+  return true;
+}
+
 /* ===== Search ===== */
-let lastRun = false, userTriggered = false;
+let lastRun = false, userTriggered = false, CANDS = [], LASTQ = null;
 function eligible(apt, ac, majors){ return apt.rwy >= ac.rwy && (!majors || apt.size==='L' || (!ac.heavy && apt.rwy>=7000)) && (!ac.heavy || apt.size==='L'); }
 
 function run(){
-  lastRun = true; store('ac',$('ac').value); store('dep',$('dep').value); store('dur',$('dur').value); store('durmode',$('durmode').value);
-  const ac = AIRCRAFT[$('ac').value];
+  lastRun = true;
+  for (const id of ['ac','dep','dur','durmode','airline','atcmode','routemode']) store(id, $(id).value);
+  const acKey = $('ac').value, ac = AIRCRAFT[acKey], ops = opsFor(acKey);
   const wantH = (+$('dur').value)/60, tolH = (+$('tol').value)/60, mode = $('durmode').value;
   const etd = new Date($('etd').value).getTime() || Date.now()+30*60e3;
   const depI = $('dep').value.trim().toUpperCase(), arrI = $('arr').value.trim().toUpperCase();
-  const needATC = $('needatc').checked, majors = $('majors').checked;
+  const atc = $('atcmode').value, real = $('routemode').value==='real' && RT.ready, majors = $('majors').checked;
+  const al = selectedAirline();
   const res = $('results');
   buildCoverIndex(); buildTraffic();
 
   for (const [v,lbl] of [[depI,'FROM'],[arrI,'TO']]) if (v && !APT.has(v)) {
     res.innerHTML = `<div class="err">I don't know <b>${esc(v)}</b> (${lbl}). Use a 4-letter ICAO code for an airport with scheduled service.</div>`; return; }
+  if (atc!=='any' && !S.ok.data) toast('Live ATC data missing, so ATC filtering is approximate');
 
-  // departure candidates
+  // ---- departure candidates ----
   let deps;
   if (depI) deps = [APT.get(depI)];
   else {
-    const set = new Set();
-    for (const [icao,c] of coverIndex) if (c.local.length) set.add(icao);
-    for (const e of S.events) if (etd>=e.s-60*60e3 && etd<=e.e) e.apts.forEach(x=>set.add(x));
-    for (const a of APT.values()) { const b=bookingsAt(a,etd); if (b.local.length) set.add(a.icao); }
-    deps = [...set].map(i=>APT.get(i)).filter(a=>a && eligible(a,ac,majors));
-    if (!deps.length){ res.innerHTML = `<div class="err">No staffed departure airports found for your aircraft right now. Type a FROM airport and I'll still find staffed destinations.</div>`; return; }
+    let pool = [...APT.values()].filter(a=>eligible(a,ac,majors));
+    if (real && al) pool = pool.filter(a=>(RT.byDep.get(a.icao)||[]).some(r=>r.cs.includes(al.i)));
+    if (atc==='want'){
+      const staffed = pool.filter(a=>nowCover(a).local.length || eventsAt(a,etd,60*60e3).length || bookingsAt(a,etd).local.length);
+      if (staffed.length) deps = staffed;
+      else if (al && hubOf(al) && APT.has(hubOf(al))) { deps=[APT.get(hubOf(al))]; toast(`No staffed ${al.name} airports right now, so starting from their hub`); }
+      else deps = [];
+    } else if (atc==='none') deps = pool.filter(a=>quiet(a, etd));
+    else deps = pool;
+    if (!real && deps.length>300) deps = deps.filter(a=>a.size==='L').slice(0,300);
+    if (!deps.length){ res.innerHTML = `<div class="err">No departure airports match right now. Type a FROM airport, or switch the ATC setting.</div>`; return; }
   }
-  const arrs = arrI ? [APT.get(arrI)] : [...APT.values()].filter(a=>eligible(a,ac,majors));
 
-  const depAssess = new Map(deps.map(d=>[d.icao, assess(d, etd)]));
+  // ---- pair generation ----
   const cands = [];
-  for (const d of deps){
-    const da = depAssess.get(d.icao);
-    for (const a of arrs){
-      if (a.icao===d.icao) continue;
-      const quick = gcd(d,a);
-      if (quick > ac.range) continue;
-      if (!arrI && !depI) { // both open: prefilter by rough time
-        const roughH = quick/ac.tas + 0.6; if (Math.abs(roughH - wantH) > tolH + 1.2) continue;
-      } else if (!arrI) { const roughH = quick/ac.tas + 0.6; if (Math.abs(roughH - wantH) > tolH + 1.2) continue; }
-      const p = perf(d,a,ac);
-      if (p.fuel > ac.fuelCap) continue;
-      const h = mode==='air' ? p.air : p.block;
-      const diff = Math.abs(h - wantH);
-      if (!(arrI && depI) && diff > tolH) continue;
-      const eta = etd + (p.air + 15/60)*3.6e6;  // touchdown ≈ ETD + taxi-out + air
-      const aa = assess(a, eta);
-      if (needATC && !arrI && !aa.likely) continue;
-      const tr = trafficOf(a), trd = trafficOf(d);
-      const score = aa.score*1.2 + da.score*0.6 - diff*60*0.5 + Math.min(18,(tr.inb+tr.out)*0.8) + Math.min(8,(trd.inb+trd.out)*0.3);
-      cands.push({d,a,p,h,diff,eta,aa,da,score,tr,trd});
+  const consider = (d, a, sched, carriers) => {
+    if (a.icao===d.icao) return;
+    if (!arrI && !eligible(a,ac,majors)) return;
+    const quick = gcd(d,a); if (quick > ac.range) return;
+    const p = perf(d,a,ac); if (p.fuel > ac.fuelCap) return;
+    let block = p.block, air = p.air;
+    if (sched>0){ block = sched/60; air = Math.max(0.3, block - 25/60); }
+    if (ac.heavy && sched>0 && sched<75 && !(arrI&&depI)) return;
+    const h = mode==='air' ? air : block, diff = Math.abs(h-wantH);
+    if (!(arrI && depI) && diff > tolH) return;
+    const eta = etd + (air + 15/60)*3.6e6;
+    const aa = assess(a, eta), da = assess(d, etd);
+    const qa = quiet(a, eta), qd = quiet(d, etd);
+    if (atc==='want' && !arrI && !aa.likely) return;
+    if (atc==='none' && !(arrI && depI) && (!qa || !qd)) return;
+    const tr = trafficOf(a), trd = trafficOf(d);
+    const opsHere = (carriers||[]).filter(i=>ops.has(RT.airlines[i].iata));
+    const jitter = (hash(d.icao+a.icao+new Date(etd).toDateString())%100)/10;
+    let score = -diff*30 + jitter + (opsHere.length ? 25 : (al ? 0 : -15));
+    if (atc==='want') score += aa.score*1.2 + da.score*0.6 + Math.min(18,(tr.inb+tr.out)*0.8) + Math.min(8,(trd.inb+trd.out)*0.3);
+    else if (atc==='none') score += 40;
+    else score += Math.min(10,(tr.inb+tr.out)*0.4);
+    cands.push({d,a,p,block,air,sched,h,diff,eta,aa,da,qa,qd,score,tr,trd,carriers:carriers||[],opsHere});
+  };
+  if (real){
+    for (const d of deps) for (const r of (RT.byDep.get(d.icao)||[])){
+      if (arrI && r.arr!==arrI) continue;
+      const a = APT.get(r.arr); if (!a) continue;
+      if (al && !r.cs.includes(al.i)) continue;
+      consider(d, a, r.min, r.cs);
+    }
+  } else {
+    const arrs = arrI ? [APT.get(arrI)] : [...APT.values()].filter(a=>eligible(a,ac,majors));
+    for (const d of deps) for (const a of arrs){
+      if (!arrI){ const roughH = gcd(d,a)/ac.tas + 0.6; if (Math.abs(roughH-wantH) > tolH+1.2) continue; }
+      let cs = []; if (RT.ready){ const r=(RT.byDep.get(d.icao)||[]).find(r=>r.arr===a.icao); if (r) cs=r.cs; }
+      consider(d, a, 0, cs);
     }
   }
   cands.sort((x,y)=>y.score-x.score);
-  // diversity: max 2 per arrival, 3 per departure
   const perA=new Map(), perD=new Map(), pick=[];
   for (const c of cands){ const na=perA.get(c.a.icao)||0, nd=perD.get(c.d.icao)||0;
     if (na>=2 || nd>=3) continue; perA.set(c.a.icao,na+1); perD.set(c.d.icao,nd+1); pick.push(c); if (pick.length>=12) break; }
-  renderResults(pick, {ac, wantH, tolH, mode, etd, depI, arrI, needATC, total:cands.length});
+  // choose an airline for each pick
+  for (const c of pick){
+    if (al) c.al = al;
+    else {
+      const opts = (c.opsHere.length ? c.opsHere : c.carriers).map(i=>RT.airlines[i]).filter(x=>x.icao);
+      opts.sort((x,y)=> (hubOf(y)===c.d.icao||hubOf(y)===c.a.icao) - (hubOf(x)===c.d.icao||hubOf(x)===c.a.icao) || (RT.count.get(y.i)||0)-(RT.count.get(x.i)||0));
+      c.al = opts[0] || fallbackAirline(acKey, c.d);
+    }
+  }
+  CANDS = pick;
+  LASTQ = {ac, acKey, wantH, tolH, mode, etd, depI, arrI, atc, real, al, total:cands.length};
+  renderResults(pick, LASTQ);
   if (window.innerWidth < 900 && userTriggered) res.scrollIntoView({behavior:'smooth', block:'start'});
   userTriggered = false;
 }
+function fallbackAirline(acKey, dep){
+  // biggest airline at the departure airport, preferring real operators of this type
+  const ops = opsFor(acKey), n = new Map();
+  for (const r of (RT.byDep.get(dep.icao)||[])) for (const i of r.cs) n.set(i,(n.get(i)||0)+1);
+  const local = [...n.entries()].map(([i,c])=>({al:RT.airlines[i], c})).filter(x=>x.al.icao)
+    .map(x=>({...x, home: APT.get(hubOf(x.al))?.cc===dep.cc}))
+    .sort((x,y)=>(y.home*2+ops.has(y.al.iata)) - (x.home*2+ops.has(x.al.iata)) || y.c-x.c);
+  if (local.length) return local[0].al;
+  const list = (OPS[acKey]||[]).map(i=>RT.byIata.get(i)).filter(Boolean);
+  if (!list.length) return {i:-1, iata:'XX', icao:'XXX', name:'Your airline', tel:''};
+  return list.find(a=>hubOf(a)===dep.icao) || list.find(a=>APT.get(hubOf(a))?.cc===dep.cc) || list[hash(dep.icao)%list.length];
+}
 
 /* ===== Rendering ===== */
-function atcLine(as, isArr){
+function atcLine(as, isArr, q, isQuiet){
+  if (q.atc==='none') return isQuiet ? `<span class="badge b-quiet">NO ATC EXPECTED ✓</span>` : as.tags.map(t=>`<span class="badge ${t.c}">${esc(t.t)}</span>`).join('');
   const bits = as.tags.map(t=>`<span class="badge ${t.c}">${esc(t.t)}</span>`).join('');
   const pos = [...as.now.local, ...as.now.ctr.slice(0,3)].slice(0,6).map(c=>`${esc(c.callsign)} ${esc(c.frequency)}`).join(' · ');
   const bk = [...as.bk.local, ...as.bk.ctr].slice(0,4).map(b=>`${esc(b.callsign)} ${zt(new Date(b.s))}–${zt(new Date(b.e))}`).join(' · ');
@@ -462,55 +670,114 @@ function atcLine(as, isArr){
 function renderResults(list, q){
   const res = $('results');
   const etdD = new Date(q.etd);
-  let head = `<div class="summary">${esc(q.ac.name)} · ${hm(q.wantH)} ${q.mode==='air'?'air time':'gate to gate'} ± ${Math.round(q.tolH*60)} min · departing ${ld(etdD)} (${zt(etdD)})${S.ok.data?'':' · <b style="color:var(--red)">live ATC data missing</b>'}</div>`;
+  const atcTxt = {want:'with ATC', none:'no ATC', any:'ATC: don\'t care'}[q.atc];
+  let head = `<div class="summary">${esc(q.ac.name)} · ${q.al?esc(q.al.name)+' · ':''}${hm(q.wantH)} ${q.mode==='air'?'air time':'gate to gate'} ± ${Math.round(q.tolH*60)} min · ${atcTxt} · ${q.real?'real routes':'any route'} · departing ${ld(etdD)} (${zt(etdD)})${S.ok.data?'':' · <b style="color:var(--red)">live ATC data missing</b>'}</div>`;
   if (!list.length){
-    res.innerHTML = head + `<div class="empty">No matches. Try a wider tolerance, a different departure time, or untick “Only show arrivals likely to have ATC”.</div>`; return;
+    const tips = [];
+    if (q.real) tips.push(q.al ? `${esc(q.al.name)} may not fly a ${hm(q.wantH)} route from there. Try another duration or departure, or set Routes to “Any route”.` : 'Try another duration, or set Routes to “Any route”.');
+    if (q.atc!=='any') tips.push('Switch ATC to “Don\'t care”.');
+    tips.push('Widen the ± tolerance.');
+    res.innerHTML = head + `<div class="empty">No matches. ${tips.join(' ')}</div>`; return;
   }
   res.innerHTML = head + list.map((c,i)=>card(c,i,q)).join('');
-  res.querySelectorAll('[data-copy]').forEach(b=>b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.copy); toast('Copied'); }catch(e){ toast('Copy failed: select the text manually'); } });
-  res.querySelectorAll('[data-metar]').forEach(b=>b.onclick=()=>showMetar(b));
+  res.querySelectorAll('.res').forEach(el=>wireCard(el));
+  const first = res.querySelector('.res'); if (first) fillGates(first);
 }
 function card(c,i,q){
   const {d,a,p,aa,da} = c; const etdD=new Date(q.etd), etaD=new Date(c.eta);
-  const ev = aa.ev[0] || da.ev[0];
+  const evs = [...new Map([...aa.ev, ...da.ev].map(e=>[e.id,e])).values()];
   let evRoute = null;
-  for (const e of [...aa.ev, ...da.ev]) for (const r of (e.routes||[])) {
+  for (const e of evs) for (const r of (e.routes||[])) {
     if ((r.departure||'').toUpperCase()===d.icao && (r.arrival||'').toUpperCase()===a.icao && r.route) { evRoute = r.route; break; } }
-  const sb = new URL('https://dispatch.simbrief.com/options/custom');
-  sb.searchParams.set('orig', d.icao); sb.searchParams.set('dest', a.icao); sb.searchParams.set('type', q.ac.sb);
-  sb.searchParams.set('deph', String(etdD.getUTCHours())); sb.searchParams.set('depm', String(etdD.getUTCMinutes()).padStart(2,'0'));
-  if (evRoute) sb.searchParams.set('route', evRoute);
-  const summary = `${d.icao}-${a.icao} ${q.ac.sb} | ETD ${zt(etdD)} ETA ~${zt(etaD)} | ${Math.round(p.dist)} nm | FL${p.fl} | block ${hm(p.block)}` + (evRoute?` | RTE ${evRoute}`:'');
-  const evHtml = [...new Map([...aa.ev, ...da.ev].map(e=>[e.id,e])).values()].map(e=>`
+  c.evRoute = evRoute;
+  const evHtml = q.atc==='none' ? '' : evs.map(e=>`
     <div class="evbox"><b>🎉 ${esc(e.name)}</b> <span class="pos">${zt(new Date(e.s))}–${zt(new Date(e.e))} · ${esc(e.apts.join(', '))}</span>
     ${e.link?` · <a href="${esc(e.link)}" target="_blank" rel="noopener">event page</a>`:''}
     ${evRoute?`<div class="rt">Event route: ${esc(evRoute)}</div>`:''}</div>`).join('');
-  return `<div class="res ${i===0?'top':''}">
+  // airline options for this route
+  const ops = opsFor(q.acKey);
+  let alOpts = c.carriers.map(i=>RT.airlines[i]).filter(x=>x && x.icao);
+  if (c.al && c.al.i>=0 && !alOpts.some(x=>x.i===c.al.i)) alOpts.unshift(c.al);
+  alOpts.sort((x,y)=>(ops.has(y.iata)-ops.has(x.iata)) || x.name.localeCompare(y.name));
+  const alSel = alOpts.length>1 ? `<select class="alsel">${alOpts.map(x=>`<option value="${x.i}" ${x.i===c.al.i?'selected':''}>${ops.has(x.iata)?'★ ':''}${esc(x.name)}</option>`).join('')}</select>` : '';
+  const realNote = c.sched>0 ? `Real route, timetable ${hm(c.sched/60)} gate to gate. Flown by ${alOpts.length} airline${alOpts.length>1?'s':''}${c.opsHere.length?'':`, but none of them uses the ${q.ac.sb} in real life`}.` : 'Made-up route (no airline flies it in the route data).';
+  return `<div class="res ${i===0?'top':''}" data-idx="${i}">
     <div class="rank">#${i+1}</div>
     <div class="route">${d.icao}<span class="arrow">→</span>${a.icao}</div>
     <div class="names">${esc(d.city||d.name)} (${esc(d.name)}) → ${esc(a.city||a.name)} (${esc(a.name)})</div>
     <div class="stats">
       <div><span>Distance</span><b>${Math.round(p.dist).toLocaleString()} nm</b></div>
-      <div><span>Gate to gate</span><b>${hm(p.block)}</b></div>
-      <div><span>Air</span><b>${hm(p.air)}</b></div>
+      <div><span>Gate to gate</span><b>${hm(c.block)}</b></div>
+      <div><span>Air</span><b>${hm(c.air)}</b></div>
       <div><span>ETD</span><b>${zt(etdD)}</b> <span>(${lt(etdD)})</span></div>
       <div><span>Land</span><b>~${zt(etaD)}</b> <span>(${lt(etaD)})</span></div>
     </div>
     <div class="atc">
-      <div class="k">Departure</div><div>${atcLine(da,false)}</div>
-      <div class="k">Arrival @ ${zt(etaD)}</div><div>${atcLine(aa,true)}</div>
+      <div class="k">Departure</div><div>${atcLine(da,false,q,c.qd)}</div>
+      <div class="k">Arrival @ ${zt(etaD)}</div><div>${atcLine(aa,true,q,c.qa)}</div>
       <div class="k">Traffic</div><div><span class="badge b-traffic">${c.tr.inb} inbound to ${a.icao}</span><span class="badge b-traffic">${c.trd.out} departing ${d.icao}</span></div>
     </div>
     ${evHtml}
-    <div class="plan"><span>Initial cruise</span> FL${p.fl} (${p.east?'eastbound, odd':'westbound, even'} levels${p.dist>2500?', step-climb later':''}) · <span>Block fuel</span> ≈ ${Math.round(p.fuel*10)/10} t <span>(rough; SimBrief will work out the real number)</span></div>
-    <div class="actions">
-      <a class="btn" href="${sb.toString()}" target="_blank" rel="noopener">Plan in SimBrief →</a>
-      <button data-copy="${esc(summary)}">Copy summary</button>
-      ${evRoute?`<button data-copy="${esc(evRoute)}">Copy event route</button>`:''}
-      <button data-metar="${d.icao},${a.icao}">METAR</button>
+    <div class="disp">
+      <h3>Dispatch</h3>
+      ${alSel}
+      <div class="dispbody"></div>
+      <div class="note">${realNote}</div>
     </div>
+    <div class="actions"></div>
     <div class="metar"></div>
   </div>`;
+}
+function wireCard(el){
+  const c = CANDS[+el.dataset.idx], q = LASTQ;
+  const sel = el.querySelector('.alsel');
+  if (sel) sel.onchange = ()=>{ c.al = RT.airlines[+sel.value]; renderDispatch(el); };
+  renderDispatch(el);
+}
+function renderDispatch(el){
+  const c = CANDS[+el.dataset.idx], q = LASTQ, p = c.p;
+  const disp = dispatchFor(c, c.al, q); el._disp = disp;
+  const etdD = new Date(q.etd), etaD = new Date(c.eta);
+  el.querySelector('.dispbody').innerHTML = `
+    <div class="dgrid">
+      <div><span>Airline</span><b>${esc(c.al.icao)}</b><small>${esc(c.al.name)}${opsFor(q.acKey).has(c.al.iata)?' ★':''}</small></div>
+      <div><span>Flight</span><b>${esc(disp.fn)}</b><small>flight number</small></div>
+      <div><span>Callsign</span><b>${esc(disp.cs)}</b><small>“${esc(disp.tel)}”</small></div>
+      <div><span>Gate out · ${c.d.icao}</span><div class="g-out"><button class="gatebtn">Find gate</button></div></div>
+      <div><span>Gate in · ${c.a.icao}</span><div class="g-in"><button class="gatebtn">Find gate</button></div></div>
+      <div><span>Alternate</span><b>${disp.altn?disp.altn.icao:'—'}</b><small>${disp.altn?esc(disp.altn.city||disp.altn.name)+' · '+Math.round(gcd(c.a,disp.altn))+' nm':'none in range'}</small></div>
+      <div><span>Cruise</span><b>FL${p.fl}</b><small>${p.east?'eastbound, odd':'westbound, even'}${p.dist>2500?', step climbs':''}</small></div>
+      <div><span>Block fuel</span><b>≈${Math.round(p.fuel*10)/10} t</b><small>rough; SimBrief is exact</small></div>
+      <div><span>SELCAL</span><b>${disp.selcal}</b><small>for long-haul HF</small></div>
+    </div>`;
+  delete el.querySelector('.dispbody').dataset.loading;
+  el.querySelectorAll('.g-out button, .g-in button').forEach(b=>b.onclick=()=>fillGates(el));
+  if (el._gatesWanted) fillGates(el);
+  // actions
+  const sb = new URL('https://dispatch.simbrief.com/options/custom');
+  const P = {orig:c.d.icao, dest:c.a.icao, type:q.ac.sb, deph:String(etdD.getUTCHours()), depm:String(etdD.getUTCMinutes()).padStart(2,'0')};
+  if (c.al.i>=0){ P.airline=c.al.icao; P.fltnum=String(disp.num); P.callsign=disp.cs; }
+  if (disp.altn) P.altn = disp.altn.icao;
+  if (c.evRoute) P.route = c.evRoute;
+  for (const [k,v] of Object.entries(P)) sb.searchParams.set(k,v);
+  const brief = () => {
+    const go = el.querySelector('.g-out')?.dataset.value, gi = el.querySelector('.g-in')?.dataset.value;
+    return [`${disp.fn} / ${disp.cs} (${disp.tel})  ${c.al.name}`,
+      `${c.d.icao} → ${c.a.icao}  ${q.ac.sb}  ${Math.round(p.dist)} nm`,
+      `ETD ${zt(etdD)}  ETA ~${zt(etaD)}  block ${hm(c.block)}`,
+      `Gate out ${go||'TBD'}  Gate in ${gi||'TBD'}`,
+      `FL${p.fl}  ALTN ${disp.altn?disp.altn.icao:'—'}  SELCAL ${disp.selcal}`,
+      ...(c.evRoute?[`RTE ${c.evRoute}`]:[])].join('\n');
+  };
+  const act = el.querySelector('.actions');
+  act.innerHTML = `<a class="btn" href="${sb.toString()}" target="_blank" rel="noopener">Plan in SimBrief →</a>
+    <button data-act="brief">Copy dispatch brief</button>
+    ${c.evRoute?`<button data-act="route">Copy event route</button>`:''}
+    <button data-act="metar">METAR</button>`;
+  const copy = async txt => { try{ await navigator.clipboard.writeText(txt); toast('Copied'); }catch(e){ toast('Copy failed: select the text manually'); } };
+  act.querySelector('[data-act=brief]').onclick = ()=>copy(brief());
+  const rb = act.querySelector('[data-act=route]'); if (rb) rb.onclick = ()=>copy(c.evRoute);
+  const mb = act.querySelector('[data-act=metar]'); mb.dataset.metar = `${c.d.icao},${c.a.icao}`; mb.onclick = ()=>showMetar(mb);
 }
 async function showMetar(btn){
   const box = btn.closest('.res').querySelector('.metar'); box.style.display='block'; box.textContent='Loading METAR…';
@@ -549,6 +816,10 @@ function showFetchError(){
 function initForm(){
   const sel=$('ac'); for (const [k,v] of Object.entries(AIRCRAFT)) sel.add(new Option(v.name,k));
   sel.value = load('ac') || 'A359';
+  sel.onchange = ()=>fillAirlines();
+  for (const id of ['atcmode','routemode']) { const v=load(id); if (v) $(id).value=v; }
+  fillAirlines();
+  loadRoutes();
   $('dep').value = load('dep') || '';
   if (load('dur')) $('dur').value = load('dur');
   if (load('durmode')) $('durmode').value = load('durmode');
